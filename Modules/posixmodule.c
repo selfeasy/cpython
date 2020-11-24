@@ -518,6 +518,11 @@ extern char        *ctermid_r(char *);
 #  include <linux/memfd.h>
 #endif
 
+/* eventfd() */
+#ifdef HAVE_SYS_EVENTFD_H
+#  include <sys/eventfd.h>
+#endif
+
 #ifdef _Py_MEMORY_SANITIZER
 #  include <sanitizer/msan_interface.h>
 #endif
@@ -6516,7 +6521,6 @@ os_spawnve_impl(PyObject *module, int mode, path_t *path, PyObject *argv,
 
 #endif /* HAVE_SPAWNV */
 
-
 #ifdef HAVE_FORK
 
 /* Helper function to validate arguments.
@@ -10365,6 +10369,75 @@ os_copy_file_range_impl(PyObject *module, int src, int dst, Py_ssize_t count,
 }
 #endif /* HAVE_COPY_FILE_RANGE*/
 
+#ifdef HAVE_SPLICE
+/*[clinic input]
+
+os.splice
+    src: int
+        Source file descriptor.
+    dst: int
+        Destination file descriptor.
+    count: Py_ssize_t
+        Number of bytes to copy.
+    offset_src: object = None
+        Starting offset in src.
+    offset_dst: object = None
+        Starting offset in dst.
+    flags: unsigned_int = 0
+        Flags to modify the semantics of the call.
+
+Transfer count bytes from one pipe to a descriptor or vice versa.
+
+If offset_src is None, then src is read from the current position;
+respectively for offset_dst. The offset associated to the file
+descriptor that refers to a pipe must be None.
+[clinic start generated code]*/
+
+static PyObject *
+os_splice_impl(PyObject *module, int src, int dst, Py_ssize_t count,
+               PyObject *offset_src, PyObject *offset_dst,
+               unsigned int flags)
+/*[clinic end generated code: output=d0386f25a8519dc5 input=047527c66c6d2e0a]*/
+{
+    off_t offset_src_val, offset_dst_val;
+    off_t *p_offset_src = NULL;
+    off_t *p_offset_dst = NULL;
+    Py_ssize_t ret;
+    int async_err = 0;
+
+    if (count < 0) {
+        PyErr_SetString(PyExc_ValueError, "negative value for 'count' not allowed");
+        return NULL;
+    }
+
+    if (offset_src != Py_None) {
+        if (!Py_off_t_converter(offset_src, &offset_src_val)) {
+            return NULL;
+        }
+        p_offset_src = &offset_src_val;
+    }
+
+    if (offset_dst != Py_None) {
+        if (!Py_off_t_converter(offset_dst, &offset_dst_val)) {
+            return NULL;
+        }
+        p_offset_dst = &offset_dst_val;
+    }
+
+    do {
+        Py_BEGIN_ALLOW_THREADS
+        ret = splice(src, p_offset_src, dst, p_offset_dst, count, flags);
+        Py_END_ALLOW_THREADS
+    } while (ret < 0 && errno == EINTR && !(async_err = PyErr_CheckSignals()));
+
+    if (ret < 0) {
+        return (!async_err) ? posix_error() : NULL;
+    }
+
+    return PyLong_FromSsize_t(ret);
+}
+#endif /* HAVE_SPLICE*/
+
 #ifdef HAVE_MKFIFO
 /*[clinic input]
 os.mkfifo
@@ -12859,6 +12932,79 @@ os_memfd_create_impl(PyObject *module, PyObject *name, unsigned int flags)
 }
 #endif
 
+#ifdef HAVE_EVENTFD
+/*[clinic input]
+os.eventfd
+
+    initval: unsigned_int
+    flags: int(c_default="EFD_CLOEXEC") = EFD_CLOEXEC
+
+Creates and returns an event notification file descriptor.
+[clinic start generated code]*/
+
+static PyObject *
+os_eventfd_impl(PyObject *module, unsigned int initval, int flags)
+/*[clinic end generated code: output=ce9c9bbd1446f2de input=66203e3c50c4028b]*/
+
+{
+    /* initval is limited to uint32_t, internal counter is uint64_t */
+    int fd;
+    Py_BEGIN_ALLOW_THREADS
+    fd = eventfd(initval, flags);
+    Py_END_ALLOW_THREADS
+    if (fd == -1) {
+        return PyErr_SetFromErrno(PyExc_OSError);
+    }
+    return PyLong_FromLong(fd);
+}
+
+/*[clinic input]
+os.eventfd_read
+
+    fd: fildes
+
+Read eventfd value
+[clinic start generated code]*/
+
+static PyObject *
+os_eventfd_read_impl(PyObject *module, int fd)
+/*[clinic end generated code: output=8f2c7b59a3521fd1 input=110f8b57fa596afe]*/
+{
+    eventfd_t value;
+    int result;
+    Py_BEGIN_ALLOW_THREADS
+    result = eventfd_read(fd, &value);
+    Py_END_ALLOW_THREADS
+    if (result == -1) {
+        return PyErr_SetFromErrno(PyExc_OSError);
+    }
+    return PyLong_FromUnsignedLongLong(value);
+}
+
+/*[clinic input]
+os.eventfd_write
+
+    fd: fildes
+    value: unsigned_long_long
+
+Write eventfd value.
+[clinic start generated code]*/
+
+static PyObject *
+os_eventfd_write_impl(PyObject *module, int fd, unsigned long long value)
+/*[clinic end generated code: output=bebd9040bbf987f5 input=156de8555be5a949]*/
+{
+    int result;
+    Py_BEGIN_ALLOW_THREADS
+    result = eventfd_write(fd, value);
+    Py_END_ALLOW_THREADS
+    if (result == -1) {
+        return PyErr_SetFromErrno(PyExc_OSError);
+    }
+    Py_RETURN_NONE;
+}
+#endif  /* HAVE_EVENTFD */
+
 /* Terminal size querying */
 
 PyDoc_STRVAR(TerminalSize_docstring,
@@ -14355,7 +14501,7 @@ os__remove_dll_directory_impl(PyObject *module, PyObject *cookie)
 
    os.waitstatus_to_exitcode() is implemented in C and not in Python, so
    subprocess can safely call it during late Python finalization without
-   risking that used os attributes were set to None by _PyImport_Cleanup(). */
+   risking that used os attributes were set to None by finalize_modules(). */
 #if defined(WIFEXITED) || defined(MS_WINDOWS)
 /*[clinic input]
 os.waitstatus_to_exitcode
@@ -14472,6 +14618,7 @@ static PyMethodDef posix_methods[] = {
     OS_POSIX_SPAWNP_METHODDEF
     OS_READLINK_METHODDEF
     OS_COPY_FILE_RANGE_METHODDEF
+    OS_SPLICE_METHODDEF
     OS_RENAME_METHODDEF
     OS_REPLACE_METHODDEF
     OS_RMDIR_METHODDEF
@@ -14619,6 +14766,9 @@ static PyMethodDef posix_methods[] = {
     OS_FSPATH_METHODDEF
     OS_GETRANDOM_METHODDEF
     OS_MEMFD_CREATE_METHODDEF
+    OS_EVENTFD_METHODDEF
+    OS_EVENTFD_READ_METHODDEF
+    OS_EVENTFD_WRITE_METHODDEF
     OS__ADD_DLL_DIRECTORY_METHODDEF
     OS__REMOVE_DLL_DIRECTORY_METHODDEF
     OS_WAITSTATUS_TO_EXITCODE_METHODDEF
@@ -14991,6 +15141,13 @@ all_ins(PyObject *m)
     if (PyModule_AddIntConstant(m, "RWF_APPEND", RWF_APPEND)) return -1;
 #endif
 
+/* constants for splice */
+#if defined(HAVE_SPLICE) && defined(__linux__)
+    if (PyModule_AddIntConstant(m, "SPLICE_F_MOVE", SPLICE_F_MOVE)) return -1;
+    if (PyModule_AddIntConstant(m, "SPLICE_F_NONBLOCK", SPLICE_F_NONBLOCK)) return -1;
+    if (PyModule_AddIntConstant(m, "SPLICE_F_MORE", SPLICE_F_MORE)) return -1;
+#endif
+
 /* constants for posix_spawn */
 #ifdef HAVE_POSIX_SPAWN
     if (PyModule_AddIntConstant(m, "POSIX_SPAWN_OPEN", POSIX_SPAWN_OPEN)) return -1;
@@ -15127,6 +15284,12 @@ all_ins(PyObject *m)
 #ifdef MFD_HUGE_16GB
     if (PyModule_AddIntMacro(m, MFD_HUGE_16GB)) return -1;
 #endif
+#endif /* HAVE_MEMFD_CREATE */
+
+#ifdef HAVE_EVENTFD
+    if (PyModule_AddIntMacro(m, EFD_CLOEXEC)) return -1;
+    if (PyModule_AddIntMacro(m, EFD_NONBLOCK)) return -1;
+    if (PyModule_AddIntMacro(m, EFD_SEMAPHORE)) return -1;
 #endif
 
 #if defined(__APPLE__)
@@ -15219,6 +15382,10 @@ static const struct have_function {
     const char * const label;
     int (*probe)(void);
 } have_functions[] = {
+
+#ifdef HAVE_EVENTFD
+    {"HAVE_EVENTFD", NULL},
+#endif
 
 #ifdef HAVE_FACCESSAT
     { "HAVE_FACCESSAT", probe_faccessat },
